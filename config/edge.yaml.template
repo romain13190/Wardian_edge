@@ -1,0 +1,37 @@
+# Wardian Edge — Gateway Configuration Reference
+#
+# This file is NOT used at runtime.
+# Run ./setup.sh to generate the actual config/edge.yaml.
+#
+# Manual configuration: copy this to config/edge.yaml and fill in values.
+
+org_token: "wdn_gw_your_token_here"
+cloud_url: "wss://app.wardian.ai/ws/gateway"
+
+servers:
+  # Always-on servers (match ports from mcp-servers entrypoint.sh)
+  database:
+    url: "http://mcp-servers:8001/sse"
+  memory:
+    url: "http://mcp-servers:8002/sse"
+
+  # Optional servers (enable matching ENABLE_*_MCP in .env)
+  # gmail:
+  #   url: "http://mcp-servers:8003/sse"
+  # drive:
+  #   url: "http://mcp-servers:8004/sse"
+  # github:
+  #   url: "http://mcp-servers:8005/sse"
+  # pharmacy:
+  #   url: "http://mcp-servers:8006/sse"
+
+  # Knowledge engine
+  knowledge:
+    url: "http://knowledge:8443/sse"
+
+  # Custom MCP servers (add your own)
+  # erp:
+  #   url: "http://host.docker.internal:9001/sse"
+  # custom:
+  #   command: "python"
+  #   args: ["/opt/custom-mcp/server.py"]

@@ -1,0 +1,170 @@
+###############################################################################
+# Wardian Edge — Self-Contained On-Premise Stack
+#
+# Services: PostgreSQL + MinIO + MCP Servers + Knowledge + Gateway
+#
+# Usage:
+#   ./setup.sh              # interactive setup (first time)
+#   docker compose up -d    # start (after setup)
+###############################################################################
+
+services:
+
+  # --- Watchtower — Auto-update containers from ghcr.io ---
+  watchtower:
+    image: containrrr/watchtower:latest
+    environment:
+      WATCHTOWER_LABEL_ENABLE: "true"          # only update containers with enable label
+      WATCHTOWER_POLL_INTERVAL: ${WATCHTOWER_POLL_INTERVAL:-21600}  # default 6h
+      WATCHTOWER_CLEANUP: "true"               # remove old images after update
+      WATCHTOWER_ROLLING_RESTART: "true"       # restart one at a time
+      WATCHTOWER_INCLUDE_RESTARTING: "true"
+      WATCHTOWER_NOTIFICATIONS: "shoutrrr"
+      WATCHTOWER_NOTIFICATION_URL: ${WATCHTOWER_NOTIFICATION_URL:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./config/docker-config.json:/config.json:ro
+    restart: unless-stopped
+
+  # --- PostgreSQL with pgvector ---
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: wardian_edge
+      POSTGRES_USER: wardian
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wardian2026}
+    volumes:
+      - edge_pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wardian -d wardian_edge"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # --- MinIO — S3-compatible object storage ---
+  minio:
+    image: minio/minio:latest
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-wardian}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-wardian2026}
+    command: minio server /data --console-address ":9001"
+    volumes:
+      - edge_s3data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # --- Create default bucket on first start ---
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "
+        mc alias set edge http://minio:9000 $${MINIO_ROOT_USER:-wardian} $${MINIO_ROOT_PASSWORD:-wardian2026} &&
+        mc mb --ignore-existing edge/wardian-vault &&
+        echo 'Bucket wardian-vault ready'
+      "
+    restart: "no"
+
+  # --- MCP Servers (database, memory, gmail, drive, etc.) ---
+  mcp-servers:
+    image: ghcr.io/romain13190/wardian-mcp-servers:latest
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      WARDIAN_DATABASE_URL: postgresql://wardian:${POSTGRES_PASSWORD:-wardian2026}@postgres:5432/wardian_edge
+      CHUTES_API_KEY: ${CHUTES_API_KEY}
+      CHUTES_BASE_URL: ${CHUTES_BASE_URL:-https://llm.chutes.ai/v1}
+      INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
+      ENABLE_GMAIL_MCP: ${ENABLE_GMAIL_MCP:-false}
+      ENABLE_DRIVE_MCP: ${ENABLE_DRIVE_MCP:-false}
+      ENABLE_GITHUB_MCP: ${ENABLE_GITHUB_MCP:-false}
+      ENABLE_PHARMACY_MCP: ${ENABLE_PHARMACY_MCP:-false}
+      ENABLE_PIPEDRIVE_MCP: ${ENABLE_PIPEDRIVE_MCP:-false}
+      ENABLE_ERPLAIN_MCP: ${ENABLE_ERPLAIN_MCP:-false}
+      ENABLE_PENNYLANE_MCP: ${ENABLE_PENNYLANE_MCP:-false}
+      # Google (Gmail / Drive)
+      GMAIL_AUTH_MODE: ${GMAIL_AUTH_MODE:-oauth}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_SERVICE_ACCOUNT_KEY: ${GOOGLE_SERVICE_ACCOUNT_KEY:-}
+      DRIVE_TARGET_USER: ${DRIVE_TARGET_USER:-}
+      # Pipedrive
+      PIPEDRIVE_API_TOKEN: ${PIPEDRIVE_API_TOKEN:-}
+      PIPEDRIVE_COMPANY_DOMAIN: ${PIPEDRIVE_COMPANY_DOMAIN:-}
+      # Erplain
+      ERPLAIN_API_TOKEN: ${ERPLAIN_API_TOKEN:-}
+      # Pennylane
+      PENNYLANE_API_TOKEN: ${PENNYLANE_API_TOKEN:-}
+      # Cloud mode: MCPs self-register via HTTP (set by setup.sh)
+      WARDIAN_CLOUD_URL: ${WARDIAN_CLOUD_URL:-}
+      MCP_REGISTRY_TOKEN: ${MCP_REGISTRY_TOKEN:-}
+      MCP_ORG_ID: ${MCP_ORG_ID:-}
+    volumes:
+      - ./config/google-service-account.json:/app/config/google-service-account.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8001/sse >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  # --- Knowledge Engine (RAG, graph, memory, sync) ---
+  knowledge:
+    image: ghcr.io/romain13190/wardian-knowledge:latest
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      DATABASE_URL: postgresql://wardian:${POSTGRES_PASSWORD:-wardian2026}@postgres:5432/wardian_edge
+      CHUTES_API_KEY: ${CHUTES_API_KEY}
+      CHUTES_BASE_URL: ${CHUTES_BASE_URL:-https://llm.chutes.ai/v1}
+      MCP_PORT: "8443"
+      EMBEDDING_DIM: "${EMBEDDING_DIM:-4096}"
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-wardian}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-wardian2026}
+      MINIO_BUCKET: wardian-vault
+      ALLOWED_MCP_URL_PREFIXES: "http://localhost:,http://mcp-servers:"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8443/mcp >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  # --- Gateway — WebSocket relay to Wardian Cloud (onprem mode only) ---
+  gateway:
+    image: ghcr.io/romain13190/wardian-gateway:latest
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    profiles:
+      - onprem
+    volumes:
+      - ./config/edge.yaml:/app/wardian-gateway.yaml:ro
+    depends_on:
+      mcp-servers:
+        condition: service_healthy
+      knowledge:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  edge_pgdata:
+  edge_s3data:
