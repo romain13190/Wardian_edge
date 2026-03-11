@@ -116,7 +116,7 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8001/sse >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',8001)); s.close()\""]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -142,10 +142,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8443/mcp >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',8443)); s.close()\""]
       interval: 10s
       timeout: 5s
       retries: 5
