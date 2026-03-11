@@ -344,9 +344,12 @@ services:
     depends_on:
       minio:
         condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: \${MINIO_ROOT_USER:-wardian}
+      MINIO_ROOT_PASSWORD: \${MINIO_ROOT_PASSWORD}
     entrypoint: >
       sh -c "
-        mc alias set edge http://minio:9000 $${MINIO_ROOT_USER:-wardian} $${MINIO_ROOT_PASSWORD} &&
+        mc alias set edge http://minio:9000 \$\$MINIO_ROOT_USER \$\$MINIO_ROOT_PASSWORD &&
         mc mb --ignore-existing edge/wardian-vault &&
         echo 'Bucket wardian-vault ready'
       "
