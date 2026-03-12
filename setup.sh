@@ -561,7 +561,7 @@ if [ "$EDGE_MODE" = "onprem" ]; then
         fi
 
         echo "  knowledge:"
-        echo "    url: \"http://knowledge:8443/sse\""
+        echo "    url: \"http://knowledge:8443/mcp\""
     } > config/edge.yaml
 
     ok "config/edge.yaml written"

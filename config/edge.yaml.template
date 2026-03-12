@@ -25,9 +25,9 @@ servers:
   # pharmacy:
   #   url: "http://mcp-servers:8006/sse"
 
-  # Knowledge engine
+  # Knowledge engine (streamable-http, NOT SSE)
   knowledge:
-    url: "http://knowledge:8443/sse"
+    url: "http://knowledge:8443/mcp"
 
   # Custom MCP servers (add your own)
   # erp:
