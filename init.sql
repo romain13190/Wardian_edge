@@ -103,6 +103,24 @@ CREATE TABLE IF NOT EXISTS integration_credentials (
 );
 CREATE INDEX IF NOT EXISTS idx_cred_user ON integration_credentials(user_id, provider);
 
+-- Vault files (encrypted file storage)
+CREATE TABLE IF NOT EXISTS vault_files (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    encrypted_envelope TEXT NOT NULL DEFAULT '',
+    envelope_iv TEXT NOT NULL DEFAULT '',
+    blob_key TEXT NOT NULL,
+    blob_size BIGINT NOT NULL,
+    created_at BIGINT NOT NULL,
+    indexed BOOLEAN NOT NULL DEFAULT false,
+    rag_document_id TEXT,
+    filename TEXT,
+    content_type TEXT,
+    source TEXT,
+    storage_backend TEXT NOT NULL DEFAULT 'edge'
+);
+CREATE INDEX IF NOT EXISTS idx_vault_files_user ON vault_files(user_id);
+
 -- Audit logs
 CREATE TABLE IF NOT EXISTS audit_logs (
     id TEXT PRIMARY KEY,
