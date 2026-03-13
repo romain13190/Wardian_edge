@@ -41,6 +41,24 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id);
 
+-- Auto-create conversation row when a message arrives before the conversation
+-- is explicitly saved (race condition between edge_save_messages / edge_save_conversation)
+CREATE OR REPLACE FUNCTION auto_create_conversation()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO conversations (id, user_id, org_id, created_at)
+    VALUES (NEW.conversation_id, COALESCE(NEW.user_id, ''), COALESCE(NEW.org_id, ''), NEW.created_at)
+    ON CONFLICT (id) DO NOTHING;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_auto_create_conversation ON messages;
+CREATE TRIGGER trg_auto_create_conversation
+    BEFORE INSERT ON messages
+    FOR EACH ROW
+    EXECUTE FUNCTION auto_create_conversation();
+
 -- Documents
 CREATE TABLE IF NOT EXISTS documents (
     id TEXT PRIMARY KEY,
