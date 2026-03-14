@@ -221,7 +221,7 @@ cd "$INSTALL_DIR"
 info "Generating secure credentials..."
 POSTGRES_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)
 MINIO_ROOT_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)
-INTEGRATION_ENCRYPTION_KEY=$(openssl rand -hex 32)
+INTEGRATION_ENCRYPTION_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
 ok "Credentials generated"
 
 # ---------- Copy Google service account if provided ---------------------------
