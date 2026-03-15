@@ -535,9 +535,14 @@ CREATE TABLE IF NOT EXISTS integration_credentials (
     user_id TEXT NOT NULL,
     org_id TEXT DEFAULT '',
     provider TEXT NOT NULL,
-    credentials_encrypted TEXT NOT NULL,
+    encrypted_access_token TEXT NOT NULL,
+    encrypted_refresh_token TEXT,
+    token_expiry BIGINT,
+    scopes TEXT,
+    email_address TEXT,
     created_at BIGINT NOT NULL,
-    updated_at BIGINT
+    updated_at BIGINT,
+    UNIQUE(user_id, provider)
 );
 CREATE INDEX IF NOT EXISTS idx_cred_user ON integration_credentials(user_id, provider);
 
