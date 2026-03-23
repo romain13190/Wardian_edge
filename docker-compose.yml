@@ -88,10 +88,12 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     environment:
+      TZ: ${TZ:-UTC}
       WARDIAN_DATABASE_URL: postgresql://wardian:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/wardian_edge
       CHUTES_API_KEY: ${LLM_API_KEY:-${CHUTES_API_KEY}}
       CHUTES_BASE_URL: ${LLM_BASE_URL:-${CHUTES_BASE_URL:-https://llm.chutes.ai/v1}}
       INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
+      ENABLE_GWS_MCP: ${ENABLE_GWS_MCP:-false}
       ENABLE_GMAIL_MCP: ${ENABLE_GMAIL_MCP:-false}
       ENABLE_DRIVE_MCP: ${ENABLE_DRIVE_MCP:-false}
       ENABLE_GITHUB_MCP: ${ENABLE_GITHUB_MCP:-false}
@@ -104,6 +106,7 @@ services:
       ENABLE_PENNYLANE_MCP: ${ENABLE_PENNYLANE_MCP:-false}
       # Google (Gmail / Drive)
       GMAIL_AUTH_MODE: ${GMAIL_AUTH_MODE:-oauth}
+      GWS_AUTH_MODE: ${GWS_AUTH_MODE:-oauth}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_SERVICE_ACCOUNT_KEY: ${GOOGLE_SERVICE_ACCOUNT_KEY:-}
