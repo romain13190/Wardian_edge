@@ -158,6 +158,24 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS idx_audit_org ON audit_logs(org_id, created_at);
 
 -- ============================================================
+-- Skills (matches cloud migration 009_skills)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS skills (
+    id TEXT PRIMARY KEY,
+    org_id TEXT,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    content TEXT NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_unique_name
+    ON skills(COALESCE(org_id, '__global__'), name);
+CREATE INDEX IF NOT EXISTS idx_skills_org_id ON skills(org_id);
+CREATE INDEX IF NOT EXISTS idx_skills_global ON skills(org_id) WHERE org_id IS NULL;
+
+-- ============================================================
 -- Agents (matches cloud migration 008_agents)
 -- ============================================================
 
@@ -238,6 +256,8 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     duration_ms INT,
     reviewed_by TEXT,
     reviewed_at BIGINT,
+    result_content TEXT,
+    files JSONB,
     created_at BIGINT NOT NULL,
     completed_at BIGINT
 );

@@ -13,6 +13,7 @@ services:
   # --- Watchtower — Auto-update containers from ghcr.io ---
   watchtower:
     image: containrrr/watchtower:latest
+    mem_limit: 256m
     environment:
       WATCHTOWER_LABEL_ENABLE: "true"          # only update containers with enable label
       WATCHTOWER_POLL_INTERVAL: ${WATCHTOWER_POLL_INTERVAL:-21600}  # default 6h
@@ -29,10 +30,11 @@ services:
   # --- PostgreSQL with pgvector ---
   postgres:
     image: pgvector/pgvector:pg16
+    mem_limit: 2g
     environment:
       POSTGRES_DB: wardian_edge
       POSTGRES_USER: wardian
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wardian2026}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - edge_pgdata:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -46,10 +48,12 @@ services:
   # --- MinIO — S3-compatible object storage ---
   minio:
     image: minio/minio:latest
+    mem_limit: 1g
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-wardian}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-wardian2026}
-    command: minio server /data --console-address ":9001"
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
+      MINIO_BROWSER: "off"
+    command: minio server /data
     volumes:
       - edge_s3data:/data
     healthcheck:
@@ -66,8 +70,8 @@ services:
       minio:
         condition: service_healthy
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-wardian}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-wardian2026}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
     entrypoint: >
       sh -c "
         mc alias set edge http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD &&
@@ -79,12 +83,14 @@ services:
   # --- MCP Servers (database, memory, gmail, drive, etc.) ---
   mcp-servers:
     image: ghcr.io/romain13190/wardian-mcp-servers:latest
+    init: true
+    mem_limit: 2g
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     environment:
-      WARDIAN_DATABASE_URL: postgresql://wardian:${POSTGRES_PASSWORD:-wardian2026}@postgres:5432/wardian_edge
-      CHUTES_API_KEY: ${CHUTES_API_KEY}
-      CHUTES_BASE_URL: ${CHUTES_BASE_URL:-https://llm.chutes.ai/v1}
+      WARDIAN_DATABASE_URL: postgresql://wardian:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/wardian_edge
+      CHUTES_API_KEY: ${LLM_API_KEY:-${CHUTES_API_KEY}}
+      CHUTES_BASE_URL: ${LLM_BASE_URL:-${CHUTES_BASE_URL:-https://llm.chutes.ai/v1}}
       INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
       ENABLE_GMAIL_MCP: ${ENABLE_GMAIL_MCP:-false}
       ENABLE_DRIVE_MCP: ${ENABLE_DRIVE_MCP:-false}
@@ -119,7 +125,7 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',8001)); s.close()\""]
+      test: ["CMD-SHELL", "python -c \"import http.client; c=http.client.HTTPConnection('127.0.0.1',8001,timeout=3); c.request('GET','/sse'); r=c.getresponse(); exit(0 if r.status<500 else 1)\""]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -129,17 +135,19 @@ services:
   # --- Knowledge Engine (RAG, graph, memory, sync) ---
   knowledge:
     image: ghcr.io/romain13190/wardian-knowledge:latest
+    init: true
+    mem_limit: 4g
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     environment:
-      DATABASE_URL: postgresql://wardian:${POSTGRES_PASSWORD:-wardian2026}@postgres:5432/wardian_edge
-      CHUTES_API_KEY: ${CHUTES_API_KEY}
-      CHUTES_BASE_URL: ${CHUTES_BASE_URL:-https://llm.chutes.ai/v1}
+      DATABASE_URL: postgresql://wardian:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/wardian_edge
+      CHUTES_API_KEY: ${LLM_API_KEY:-${CHUTES_API_KEY}}
+      CHUTES_BASE_URL: ${LLM_BASE_URL:-${CHUTES_BASE_URL:-https://llm.chutes.ai/v1}}
       MCP_PORT: "8443"
       EMBEDDING_DIM: "${EMBEDDING_DIM:-4096}"
       MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-wardian}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-wardian2026}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
       MINIO_BUCKET: wardian-vault
       ALLOWED_MCP_URL_PREFIXES: "http://localhost:,http://mcp-servers:"
     depends_on:
@@ -148,7 +156,7 @@ services:
       minio:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',8443)); s.close()\""]
+      test: ["CMD-SHELL", "python -c \"import http.client; c=http.client.HTTPConnection('127.0.0.1',8443,timeout=3); c.request('GET','/mcp'); r=c.getresponse(); exit(0 if r.status<500 else 1)\""]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -158,6 +166,8 @@ services:
   # --- Gateway — WebSocket relay to Wardian Cloud (onprem mode only) ---
   gateway:
     image: ghcr.io/romain13190/wardian-gateway:latest
+    init: true
+    mem_limit: 512m
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     profiles:

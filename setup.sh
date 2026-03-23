@@ -121,15 +121,18 @@ fi
 echo ""
 echo -e "${BOLD}--- LLM Provider ---${NC}"
 echo ""
-read -rp "$(echo -e "${CYAN}CHUTES_API_KEY:${NC} ")" CHUTES_API_KEY
-if [ -z "$CHUTES_API_KEY" ]; then
-    err "CHUTES_API_KEY is required."
+echo "  Any OpenAI-compatible endpoint: Chutes, OpenAI, Ollama, vLLM, etc."
+echo "  For Ollama local: URL=http://host.docker.internal:11434/v1 KEY=ollama"
+echo ""
+read -rp "$(echo -e "${CYAN}LLM_API_KEY:${NC} ")" LLM_API_KEY
+if [ -z "$LLM_API_KEY" ]; then
+    err "LLM_API_KEY is required."
     exit 1
 fi
 
-read -rp "$(echo -e "${CYAN}CHUTES_BASE_URL [https://llm.chutes.ai/v1]:${NC} ")" CHUTES_BASE_URL
-CHUTES_BASE_URL=${CHUTES_BASE_URL:-https://llm.chutes.ai/v1}
-ok "LLM provider configured"
+read -rp "$(echo -e "${CYAN}LLM_BASE_URL [https://llm.chutes.ai/v1]:${NC} ")" LLM_BASE_URL
+LLM_BASE_URL=${LLM_BASE_URL:-https://llm.chutes.ai/v1}
+ok "LLM provider configured: $LLM_BASE_URL"
 
 # =============================================================================
 # 4. MCP Servers
@@ -404,7 +407,8 @@ info "Generating secure credentials..."
 
 POSTGRES_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)
 MINIO_ROOT_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)
-INTEGRATION_ENCRYPTION_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+# Fernet key = url-safe base64 of 32 random bytes (no Python needed)
+INTEGRATION_ENCRYPTION_KEY=$(openssl rand 32 | openssl base64 -A | tr '+/' '-_')
 
 ok "POSTGRES_PASSWORD generated"
 ok "MINIO_ROOT_PASSWORD generated"
@@ -432,9 +436,9 @@ CLOUD_URL=$CLOUD_URL
 WARDIAN_CLOUD_URL=$WARDIAN_CLOUD_URL
 MCP_REGISTRY_TOKEN=$MCP_REGISTRY_TOKEN
 
-# --- LLM ---
-CHUTES_API_KEY=$CHUTES_API_KEY
-CHUTES_BASE_URL=$CHUTES_BASE_URL
+# --- LLM (any OpenAI-compatible endpoint) ---
+LLM_API_KEY=$LLM_API_KEY
+LLM_BASE_URL=$LLM_BASE_URL
 
 # --- PostgreSQL ---
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD

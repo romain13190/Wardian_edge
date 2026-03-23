@@ -2,27 +2,30 @@
 ###############################################################################
 # Wardian Edge — One-Command Installer
 #
-# Deploys the full Wardian Edge stack (PostgreSQL, MinIO, MCP Servers,
-# Knowledge Engine, Gateway) using pre-built Docker images from ghcr.io.
+# Prerequisites: docker, curl, openssl (NO Python needed on host)
+#
+# Delivered as a tarball containing:
+#   install.sh, docker-compose.yml, init.sql, DEPLOYMENT-RUNBOOK.md
 #
 # Usage:
-#   bash install.sh --token <ORG_TOKEN> --ghcr <GHCR_TOKEN> --llm-key <CHUTES_API_KEY>
+#   bash install.sh --token <ORG_TOKEN> --ghcr <GHCR_TOKEN> --llm-key <API_KEY>
 #
 # Options:
 #   --token       Gateway org token (from Wardian admin dashboard)
-#   --ghcr        GitHub token with read:packages scope (to pull private images)
-#   --llm-key     Chutes API key for LLM access
-#   --llm-url     Chutes base URL (default: https://llm.chutes.ai/v1)
+#   --ghcr        GitHub token with read:packages scope (to pull images)
+#   --llm-key     LLM API key (any OpenAI-compatible provider)
+#   --llm-url     LLM base URL (default: https://llm.chutes.ai/v1)
 #   --cloud-url   Cloud WebSocket URL (default: wss://app.wardian.ai/ws/gateway)
-#   --mcps        Comma-separated optional MCPs: gmail,drive,github,pharmacy,pipedrive,erplain,pennylane
-#   --google-sa-key      Path to Google service account JSON (for gmail/drive with service_account mode)
-#   --google-client-id   Google OAuth client ID (for gmail/drive with oauth mode)
-#   --google-client-secret Google OAuth client secret (for gmail/drive with oauth mode)
-#   --drive-user         Google Workspace admin email for Drive impersonation (service_account mode)
-#   --pipedrive-token    Pipedrive API token (required if pipedrive in --mcps)
-#   --pipedrive-domain   Pipedrive company domain (required if pipedrive in --mcps)
-#   --erplain-token      Erplain API token (required if erplain in --mcps)
-#   --pennylane-token    Pennylane API token (required if pennylane in --mcps)
+#   --mcps        Comma-separated optional MCPs: gmail,drive,calendar,sheets,
+#                 docs,github,pharmacy,pipedrive,erplain,pennylane
+#   --google-sa-key      Path to Google service account JSON
+#   --google-client-id   Google OAuth client ID
+#   --google-client-secret Google OAuth client secret
+#   --drive-user         Google Workspace admin email (service_account mode)
+#   --pipedrive-token    Pipedrive API token
+#   --pipedrive-domain   Pipedrive company domain
+#   --erplain-token      Erplain API token
+#   --pennylane-token    Pennylane API token
 #   --dir         Install directory (default: ./wardian-edge)
 #   -y            Skip confirmation prompt
 #   --help        Show this help
@@ -31,11 +34,17 @@
 #   bash install.sh \
 #     --token wdn_gw_abc123 \
 #     --ghcr ghp_xxx \
-#     --llm-key sk-xxx \
-#     --mcps gmail,drive
+#     --llm-key cpk_xxx \
+#     --mcps gmail,drive,pipedrive \
+#     --google-sa-key ~/service-account.json \
+#     --drive-user admin@company.com \
+#     --pipedrive-token xxx \
+#     --pipedrive-domain acme
 ###############################################################################
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # ---------- Colors -----------------------------------------------------------
 RED='\033[0;31m'
@@ -53,8 +62,9 @@ err()   { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 # ---------- Parse arguments --------------------------------------------------
 ORG_TOKEN=""
 GHCR_TOKEN=""
-CHUTES_API_KEY=""
-CHUTES_BASE_URL="https://llm.chutes.ai/v1"
+LLM_API_KEY=""
+OFFLINE=false
+LLM_BASE_URL="https://llm.chutes.ai/v1"
 CLOUD_URL="wss://app.wardian.ai/ws/gateway"
 INSTALL_DIR="./wardian-edge"
 MCPS=""
@@ -71,7 +81,7 @@ PENNYLANE_API_TOKEN=""
 AUTO_YES=false
 
 show_help() {
-    head -30 "$0" | grep '^#' | sed 's/^# \?//'
+    head -40 "$0" | grep '^#' | sed 's/^# \?//'
     exit 0
 }
 
@@ -79,8 +89,8 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --token)     ORG_TOKEN="$2"; shift 2 ;;
         --ghcr)      GHCR_TOKEN="$2"; shift 2 ;;
-        --llm-key)   CHUTES_API_KEY="$2"; shift 2 ;;
-        --llm-url)   CHUTES_BASE_URL="$2"; shift 2 ;;
+        --llm-key)   LLM_API_KEY="$2"; shift 2 ;;
+        --llm-url)   LLM_BASE_URL="$2"; shift 2 ;;
         --cloud-url) CLOUD_URL="$2"; shift 2 ;;
         --mcps)      MCPS="$2"; shift 2 ;;
         --google-sa-key)     GOOGLE_SERVICE_ACCOUNT_KEY_PATH="$2"; shift 2 ;;
@@ -92,6 +102,7 @@ while [[ $# -gt 0 ]]; do
         --erplain-token)     ERPLAIN_API_TOKEN="$2"; shift 2 ;;
         --pennylane-token)   PENNYLANE_API_TOKEN="$2"; shift 2 ;;
         --dir)       INSTALL_DIR="$2"; shift 2 ;;
+        --offline)   OFFLINE=true; shift ;;
         -y)          AUTO_YES=true; shift ;;
         --help|-h)   show_help ;;
         *)           err "Unknown option: $1. Use --help for usage." ;;
@@ -99,13 +110,18 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---------- Validate required args ------------------------------------------
-[[ -z "$ORG_TOKEN" ]]     && err "Missing --token (gateway org token)"
-[[ -z "$GHCR_TOKEN" ]]    && err "Missing --ghcr (GitHub token for pulling images)"
-[[ -z "$CHUTES_API_KEY" ]] && err "Missing --llm-key (Chutes API key)"
+[[ -z "$ORG_TOKEN" ]]    && err "Missing --token (gateway org token from admin dashboard)"
+[[ -z "$LLM_API_KEY" ]]  && err "Missing --llm-key (LLM API key)"
+if [[ "$OFFLINE" != "true" && -z "$GHCR_TOKEN" ]]; then
+    err "Missing --ghcr (GitHub token) — or use --offline if images are pre-loaded with 'docker load'"
+fi
 
 # ---------- Parse MCP selection ----------------------------------------------
 ENABLE_GMAIL_MCP=false
 ENABLE_DRIVE_MCP=false
+ENABLE_CALENDAR_MCP=false
+ENABLE_SHEETS_MCP=false
+ENABLE_DOCS_MCP=false
 ENABLE_GITHUB_MCP=false
 ENABLE_PHARMACY_MCP=false
 ENABLE_PIPEDRIVE_MCP=false
@@ -118,6 +134,9 @@ if [[ -n "$MCPS" ]]; then
         case "$(echo "$mcp" | tr -d ' ' | tr '[:upper:]' '[:lower:]')" in
             gmail)     ENABLE_GMAIL_MCP=true ;;
             drive)     ENABLE_DRIVE_MCP=true ;;
+            calendar)  ENABLE_CALENDAR_MCP=true ;;
+            sheets)    ENABLE_SHEETS_MCP=true ;;
+            docs)      ENABLE_DOCS_MCP=true ;;
             github)    ENABLE_GITHUB_MCP=true ;;
             pharmacy)  ENABLE_PHARMACY_MCP=true ;;
             pipedrive) ENABLE_PIPEDRIVE_MCP=true ;;
@@ -129,23 +148,30 @@ if [[ -n "$MCPS" ]]; then
 fi
 
 # Determine Google auth mode
-if [[ "$ENABLE_GMAIL_MCP" == "true" || "$ENABLE_DRIVE_MCP" == "true" ]]; then
+NEEDS_GOOGLE=false
+if [[ "$ENABLE_GMAIL_MCP" == "true" || "$ENABLE_DRIVE_MCP" == "true" || \
+      "$ENABLE_CALENDAR_MCP" == "true" || "$ENABLE_SHEETS_MCP" == "true" || \
+      "$ENABLE_DOCS_MCP" == "true" ]]; then
+    NEEDS_GOOGLE=true
+fi
+
+if [[ "$NEEDS_GOOGLE" == "true" ]]; then
     if [[ -n "$GOOGLE_SERVICE_ACCOUNT_KEY_PATH" ]]; then
         GMAIL_AUTH_MODE=service_account
         [[ ! -f "$GOOGLE_SERVICE_ACCOUNT_KEY_PATH" ]] && err "Service account file not found: $GOOGLE_SERVICE_ACCOUNT_KEY_PATH"
     elif [[ -n "$GOOGLE_CLIENT_ID" && -n "$GOOGLE_CLIENT_SECRET" ]]; then
         GMAIL_AUTH_MODE=oauth
     else
-        err "Gmail/Drive enabled but no Google credentials provided. Use --google-sa-key or --google-client-id + --google-client-secret"
+        err "Google MCPs enabled but no credentials. Use --google-sa-key or --google-client-id + --google-client-secret"
     fi
 fi
-[[ "$ENABLE_DRIVE_MCP" == "true" && "$GMAIL_AUTH_MODE" == "service_account" && -z "$DRIVE_TARGET_USER" ]] && err "Drive enabled with service account but --drive-user not provided"
 
-# Validate credentials for enabled MCPs
-[[ "$ENABLE_PIPEDRIVE_MCP" == "true" && -z "$PIPEDRIVE_API_TOKEN" ]] && err "Pipedrive enabled but --pipedrive-token not provided"
-[[ "$ENABLE_PIPEDRIVE_MCP" == "true" && -z "$PIPEDRIVE_COMPANY_DOMAIN" ]] && err "Pipedrive enabled but --pipedrive-domain not provided"
-[[ "$ENABLE_ERPLAIN_MCP" == "true" && -z "$ERPLAIN_API_TOKEN" ]] && err "Erplain enabled but --erplain-token not provided"
-[[ "$ENABLE_PENNYLANE_MCP" == "true" && -z "$PENNYLANE_API_TOKEN" ]] && err "Pennylane enabled but --pennylane-token not provided"
+[[ "$ENABLE_DRIVE_MCP" == "true" && "$GMAIL_AUTH_MODE" == "service_account" && -z "$DRIVE_TARGET_USER" ]] && \
+    err "Drive + service account requires --drive-user"
+[[ "$ENABLE_PIPEDRIVE_MCP" == "true" && -z "$PIPEDRIVE_API_TOKEN" ]] && err "Pipedrive enabled but --pipedrive-token missing"
+[[ "$ENABLE_PIPEDRIVE_MCP" == "true" && -z "$PIPEDRIVE_COMPANY_DOMAIN" ]] && err "Pipedrive enabled but --pipedrive-domain missing"
+[[ "$ENABLE_ERPLAIN_MCP" == "true" && -z "$ERPLAIN_API_TOKEN" ]] && err "Erplain enabled but --erplain-token missing"
+[[ "$ENABLE_PENNYLANE_MCP" == "true" && -z "$PENNYLANE_API_TOKEN" ]] && err "Pennylane enabled but --pennylane-token missing"
 
 # ---------- Pre-flight checks -----------------------------------------------
 echo ""
@@ -175,7 +201,7 @@ echo ""
 echo "  Install dir:   $INSTALL_DIR"
 echo "  Cloud URL:     $CLOUD_URL"
 echo "  Org token:     ${ORG_TOKEN:0:16}..."
-echo "  LLM provider:  $CHUTES_BASE_URL"
+echo "  LLM provider:  $LLM_BASE_URL"
 echo ""
 echo "  Services:"
 echo "    - PostgreSQL (pgvector)"
@@ -187,6 +213,9 @@ echo "    - Gateway (WebSocket relay)"
 ENABLED_MCPS=""
 [[ "$ENABLE_GMAIL_MCP" == "true" ]]     && ENABLED_MCPS="${ENABLED_MCPS} gmail"
 [[ "$ENABLE_DRIVE_MCP" == "true" ]]     && ENABLED_MCPS="${ENABLED_MCPS} drive"
+[[ "$ENABLE_CALENDAR_MCP" == "true" ]]  && ENABLED_MCPS="${ENABLED_MCPS} calendar"
+[[ "$ENABLE_SHEETS_MCP" == "true" ]]    && ENABLED_MCPS="${ENABLED_MCPS} sheets"
+[[ "$ENABLE_DOCS_MCP" == "true" ]]      && ENABLED_MCPS="${ENABLED_MCPS} docs"
 [[ "$ENABLE_GITHUB_MCP" == "true" ]]    && ENABLED_MCPS="${ENABLED_MCPS} github"
 [[ "$ENABLE_PHARMACY_MCP" == "true" ]]  && ENABLED_MCPS="${ENABLED_MCPS} pharmacy"
 [[ "$ENABLE_PIPEDRIVE_MCP" == "true" ]] && ENABLED_MCPS="${ENABLED_MCPS} pipedrive"
@@ -208,21 +237,42 @@ if [[ "$AUTO_YES" != "true" ]]; then
 fi
 
 # ---------- Login to ghcr.io ------------------------------------------------
-info "Logging in to ghcr.io..."
-echo "$GHCR_TOKEN" | docker login ghcr.io -u wardian-client --password-stdin 2>/dev/null \
-    || err "Failed to login to ghcr.io. Check your --ghcr token."
-ok "Logged in to ghcr.io"
+if [[ "$OFFLINE" != "true" ]]; then
+    info "Logging in to ghcr.io..."
+    echo "$GHCR_TOKEN" | docker login ghcr.io -u wardian-client --password-stdin 2>/dev/null \
+        || err "Failed to login to ghcr.io. Check your --ghcr token."
+    ok "Logged in to ghcr.io"
+else
+    info "Offline mode — skipping ghcr.io login"
+fi
 
 # ---------- Create install directory -----------------------------------------
 mkdir -p "$INSTALL_DIR/config"
+
+# Copy docker-compose.yml and init.sql from the tarball (same directory as this script)
+if [[ -f "$SCRIPT_DIR/docker-compose.yml" ]]; then
+    cp "$SCRIPT_DIR/docker-compose.yml" "$INSTALL_DIR/docker-compose.yml"
+    ok "docker-compose.yml copied"
+else
+    err "docker-compose.yml not found next to install.sh. Ensure you extracted the full tarball."
+fi
+
+if [[ -f "$SCRIPT_DIR/init.sql" ]]; then
+    cp "$SCRIPT_DIR/init.sql" "$INSTALL_DIR/init.sql"
+    ok "init.sql copied"
+else
+    err "init.sql not found next to install.sh. Ensure you extracted the full tarball."
+fi
+
 cd "$INSTALL_DIR"
 
-# ---------- Generate credentials ---------------------------------------------
+# ---------- Generate credentials (openssl only, no Python) -------------------
 info "Generating secure credentials..."
 POSTGRES_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)
 MINIO_ROOT_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)
-INTEGRATION_ENCRYPTION_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
-ok "Credentials generated"
+# Fernet key = url-safe base64 of 32 random bytes (44 chars with trailing =)
+INTEGRATION_ENCRYPTION_KEY=$(openssl rand 32 | openssl base64 -A | tr '+/' '-_')
+ok "Credentials generated (POSTGRES_PASSWORD, MINIO_ROOT_PASSWORD, INTEGRATION_ENCRYPTION_KEY)"
 
 # ---------- Copy Google service account if provided ---------------------------
 if [[ -n "$GOOGLE_SERVICE_ACCOUNT_KEY_PATH" ]]; then
@@ -230,7 +280,6 @@ if [[ -n "$GOOGLE_SERVICE_ACCOUNT_KEY_PATH" ]]; then
     GOOGLE_SERVICE_ACCOUNT_KEY="/app/config/google-service-account.json"
     ok "Google service account copied to config/"
 else
-    # Empty file so docker volume mount doesn't fail
     echo '{}' > config/google-service-account.json
 fi
 
@@ -244,9 +293,9 @@ EDGE_MODE=onprem
 ORG_TOKEN=$ORG_TOKEN
 CLOUD_URL=$CLOUD_URL
 
-# LLM
-CHUTES_API_KEY=$CHUTES_API_KEY
-CHUTES_BASE_URL=$CHUTES_BASE_URL
+# LLM (any OpenAI-compatible endpoint)
+LLM_API_KEY=$LLM_API_KEY
+LLM_BASE_URL=$LLM_BASE_URL
 
 # PostgreSQL
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
@@ -258,13 +307,16 @@ MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD
 # MCP Servers
 ENABLE_GMAIL_MCP=$ENABLE_GMAIL_MCP
 ENABLE_DRIVE_MCP=$ENABLE_DRIVE_MCP
+ENABLE_CALENDAR_MCP=$ENABLE_CALENDAR_MCP
+ENABLE_SHEETS_MCP=$ENABLE_SHEETS_MCP
+ENABLE_DOCS_MCP=$ENABLE_DOCS_MCP
 ENABLE_GITHUB_MCP=$ENABLE_GITHUB_MCP
 ENABLE_PHARMACY_MCP=$ENABLE_PHARMACY_MCP
 ENABLE_PIPEDRIVE_MCP=$ENABLE_PIPEDRIVE_MCP
 ENABLE_ERPLAIN_MCP=$ENABLE_ERPLAIN_MCP
 ENABLE_PENNYLANE_MCP=$ENABLE_PENNYLANE_MCP
 
-# Google (Gmail / Drive)
+# Google Workspace
 GMAIL_AUTH_MODE=$GMAIL_AUTH_MODE
 GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID
 GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET
@@ -284,281 +336,11 @@ PENNYLANE_API_TOKEN=$PENNYLANE_API_TOKEN
 # Encryption
 INTEGRATION_ENCRYPTION_KEY=$INTEGRATION_ENCRYPTION_KEY
 
-# Auto-update
+# Auto-update (Watchtower)
 GHCR_TOKEN=$GHCR_TOKEN
 WATCHTOWER_POLL_INTERVAL=21600
 ENVEOF
 ok ".env written"
-
-# ---------- Write docker-compose.yml ----------------------------------------
-info "Writing docker-compose.yml..."
-cat > docker-compose.yml <<'COMPOSEEOF'
-services:
-
-  watchtower:
-    image: containrrr/watchtower:latest
-    environment:
-      WATCHTOWER_LABEL_ENABLE: "true"
-      WATCHTOWER_POLL_INTERVAL: ${WATCHTOWER_POLL_INTERVAL:-21600}
-      WATCHTOWER_CLEANUP: "true"
-      WATCHTOWER_ROLLING_RESTART: "true"
-      WATCHTOWER_INCLUDE_RESTARTING: "true"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./config/docker-config.json:/config.json:ro
-    restart: unless-stopped
-
-  postgres:
-    image: pgvector/pgvector:pg16
-    environment:
-      POSTGRES_DB: wardian_edge
-      POSTGRES_USER: wardian
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - edge_pgdata:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U wardian -d wardian_edge"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
-  minio:
-    image: minio/minio:latest
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-wardian}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    command: minio server /data --console-address ":9001"
-    volumes:
-      - edge_s3data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-    restart: unless-stopped
-
-  minio-init:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    environment:
-      MINIO_ROOT_USER: \${MINIO_ROOT_USER:-wardian}
-      MINIO_ROOT_PASSWORD: \${MINIO_ROOT_PASSWORD}
-    entrypoint: >
-      sh -c "
-        mc alias set edge http://minio:9000 \$\$MINIO_ROOT_USER \$\$MINIO_ROOT_PASSWORD &&
-        mc mb --ignore-existing edge/wardian-vault &&
-        echo 'Bucket wardian-vault ready'
-      "
-    restart: "no"
-
-  mcp-servers:
-    image: ghcr.io/romain13190/wardian-mcp-servers:latest
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-    environment:
-      WARDIAN_DATABASE_URL: postgresql://wardian:${POSTGRES_PASSWORD}@postgres:5432/wardian_edge
-      CHUTES_API_KEY: ${CHUTES_API_KEY}
-      CHUTES_BASE_URL: ${CHUTES_BASE_URL:-https://llm.chutes.ai/v1}
-      INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
-      ENABLE_GMAIL_MCP: ${ENABLE_GMAIL_MCP:-false}
-      ENABLE_DRIVE_MCP: ${ENABLE_DRIVE_MCP:-false}
-      ENABLE_GITHUB_MCP: ${ENABLE_GITHUB_MCP:-false}
-      ENABLE_PHARMACY_MCP: ${ENABLE_PHARMACY_MCP:-false}
-      ENABLE_PIPEDRIVE_MCP: ${ENABLE_PIPEDRIVE_MCP:-false}
-      ENABLE_ERPLAIN_MCP: ${ENABLE_ERPLAIN_MCP:-false}
-      ENABLE_PENNYLANE_MCP: ${ENABLE_PENNYLANE_MCP:-false}
-      GMAIL_AUTH_MODE: ${GMAIL_AUTH_MODE:-oauth}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      GOOGLE_SERVICE_ACCOUNT_KEY: ${GOOGLE_SERVICE_ACCOUNT_KEY:-}
-      DRIVE_TARGET_USER: ${DRIVE_TARGET_USER:-}
-      PIPEDRIVE_API_TOKEN: ${PIPEDRIVE_API_TOKEN:-}
-      PIPEDRIVE_COMPANY_DOMAIN: ${PIPEDRIVE_COMPANY_DOMAIN:-}
-      ERPLAIN_API_TOKEN: ${ERPLAIN_API_TOKEN:-}
-      PENNYLANE_API_TOKEN: ${PENNYLANE_API_TOKEN:-}
-    volumes:
-      - ./config/google-service-account.json:/app/config/google-service-account.json:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8001/sse >/dev/null 2>&1 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    restart: unless-stopped
-
-  knowledge:
-    image: ghcr.io/romain13190/wardian-knowledge:latest
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-    environment:
-      DATABASE_URL: postgresql://wardian:${POSTGRES_PASSWORD}@postgres:5432/wardian_edge
-      CHUTES_API_KEY: ${CHUTES_API_KEY}
-      CHUTES_BASE_URL: ${CHUTES_BASE_URL:-https://llm.chutes.ai/v1}
-      MCP_PORT: "8443"
-      EMBEDDING_DIM: "${EMBEDDING_DIM:-4096}"
-      MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-wardian}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
-      MINIO_BUCKET: wardian-vault
-      ALLOWED_MCP_URL_PREFIXES: "http://localhost:,http://mcp-servers:"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8443/mcp >/dev/null 2>&1 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    restart: unless-stopped
-
-  gateway:
-    image: ghcr.io/romain13190/wardian-gateway:latest
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-    profiles:
-      - onprem
-    volumes:
-      - ./config/edge.yaml:/app/wardian-gateway.yaml:ro
-    depends_on:
-      mcp-servers:
-        condition: service_healthy
-      knowledge:
-        condition: service_healthy
-    restart: unless-stopped
-
-volumes:
-  edge_pgdata:
-  edge_s3data:
-COMPOSEEOF
-ok "docker-compose.yml written"
-
-# ---------- Write init.sql ---------------------------------------------------
-info "Writing init.sql..."
-cat > init.sql <<'SQLEOF'
-CREATE EXTENSION IF NOT EXISTS vector;
-
-CREATE TABLE IF NOT EXISTS conversations (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    org_id TEXT,
-    title TEXT,
-    model_id TEXT,
-    messages JSONB,
-    created_at BIGINT NOT NULL,
-    updated_at BIGINT,
-    pinned BOOLEAN NOT NULL DEFAULT FALSE,
-    conversation_summary TEXT,
-    open_threads JSONB,
-    key_facts JSONB,
-    summary_updated_at BIGINT,
-    summary_message_count INT,
-    summary_token_est INT,
-    encrypted_data TEXT,
-    encrypted BOOLEAN DEFAULT false
-);
-CREATE INDEX IF NOT EXISTS idx_conv_user ON conversations(user_id);
-CREATE INDEX IF NOT EXISTS idx_conv_org ON conversations(org_id);
-
-CREATE TABLE IF NOT EXISTS messages (
-    id TEXT PRIMARY KEY,
-    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    user_id TEXT,
-    org_id TEXT,
-    role TEXT NOT NULL,
-    content TEXT,
-    tokens INT,
-    cost_cents INT,
-    is_encrypted BOOLEAN DEFAULT FALSE,
-    created_at BIGINT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id);
-
-CREATE TABLE IF NOT EXISTS documents (
-    id TEXT PRIMARY KEY,
-    org_id TEXT,
-    user_id TEXT NOT NULL,
-    name TEXT NOT NULL,
-    content_type TEXT,
-    size_bytes INTEGER,
-    text_content TEXT,
-    visibility TEXT NOT NULL DEFAULT 'private',
-    metadata JSONB,
-    created_at BIGINT NOT NULL,
-    updated_at BIGINT
-);
-CREATE INDEX IF NOT EXISTS idx_doc_org ON documents(org_id, user_id);
-
-CREATE TABLE IF NOT EXISTS document_chunks (
-    id TEXT PRIMARY KEY,
-    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    org_id TEXT,
-    user_id TEXT NOT NULL,
-    chunk_index INTEGER NOT NULL,
-    content TEXT NOT NULL,
-    token_count INTEGER,
-    visibility TEXT NOT NULL DEFAULT 'private',
-    created_at BIGINT NOT NULL,
-    embedding vector(4096)
-);
-CREATE INDEX IF NOT EXISTS idx_chunks_org ON document_chunks(org_id, visibility);
-CREATE INDEX IF NOT EXISTS idx_chunks_user ON document_chunks(org_id, user_id, visibility);
-CREATE INDEX IF NOT EXISTS idx_chunks_doc ON document_chunks(document_id);
-
-CREATE TABLE IF NOT EXISTS user_memory (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    org_id TEXT DEFAULT '',
-    category TEXT DEFAULT 'general',
-    content TEXT NOT NULL,
-    embedding vector(4096),
-    importance REAL DEFAULT 0.5,
-    access_count INTEGER DEFAULT 0,
-    last_accessed BIGINT,
-    expires_at BIGINT,
-    created_at BIGINT NOT NULL,
-    updated_at BIGINT
-);
-CREATE INDEX IF NOT EXISTS idx_memory_user ON user_memory(user_id, org_id);
-
-CREATE TABLE IF NOT EXISTS integration_credentials (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    org_id TEXT DEFAULT '',
-    provider TEXT NOT NULL,
-    encrypted_access_token TEXT NOT NULL,
-    encrypted_refresh_token TEXT,
-    token_expiry BIGINT,
-    scopes TEXT,
-    email_address TEXT,
-    created_at BIGINT NOT NULL,
-    updated_at BIGINT,
-    UNIQUE(user_id, provider)
-);
-CREATE INDEX IF NOT EXISTS idx_cred_user ON integration_credentials(user_id, provider);
-
-CREATE TABLE IF NOT EXISTS audit_logs (
-    id TEXT PRIMARY KEY,
-    user_id TEXT,
-    org_id TEXT,
-    action TEXT NOT NULL,
-    resource_type TEXT,
-    resource_id TEXT,
-    details JSONB,
-    created_at BIGINT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_audit_org ON audit_logs(org_id, created_at);
-SQLEOF
-ok "init.sql written"
 
 # ---------- Write config/edge.yaml ------------------------------------------
 info "Writing config/edge.yaml..."
@@ -575,10 +357,14 @@ info "Writing config/edge.yaml..."
     [[ "$ENABLE_GMAIL_MCP" == "true" ]] && {
         echo "  gmail:"
         echo "    url: \"http://mcp-servers:8003/sse\""
+        echo "    auth: user"
+        echo "    provider: google"
     }
     [[ "$ENABLE_DRIVE_MCP" == "true" ]] && {
         echo "  drive:"
         echo "    url: \"http://mcp-servers:8004/sse\""
+        echo "    auth: user"
+        echo "    provider: google"
     }
     [[ "$ENABLE_GITHUB_MCP" == "true" ]] && {
         echo "  github:"
@@ -599,6 +385,18 @@ info "Writing config/edge.yaml..."
     [[ "$ENABLE_PENNYLANE_MCP" == "true" ]] && {
         echo "  pennylane:"
         echo "    url: \"http://mcp-servers:8013/sse\""
+    }
+    [[ "$ENABLE_DOCS_MCP" == "true" ]] && {
+        echo "  docs:"
+        echo "    url: \"http://mcp-servers:8014/sse\""
+    }
+    [[ "$ENABLE_SHEETS_MCP" == "true" ]] && {
+        echo "  sheets:"
+        echo "    url: \"http://mcp-servers:8015/sse\""
+    }
+    [[ "$ENABLE_CALENDAR_MCP" == "true" ]] && {
+        echo "  calendar:"
+        echo "    url: \"http://mcp-servers:8016/sse\""
     }
 
     echo "  knowledge:"
@@ -621,38 +419,52 @@ DOCKEREOF
 ok "config/docker-config.json written"
 
 # ---------- Pull images ------------------------------------------------------
-info "Pulling Docker images (this may take a few minutes)..."
-docker compose --profile onprem pull 2>&1 | grep -E "Pull|Downloaded|up to date" || true
-ok "Images pulled"
+if [[ "$OFFLINE" != "true" ]]; then
+    info "Pulling Docker images (this may take a few minutes on first install)..."
+    docker compose --profile onprem pull
+    ok "Images pulled"
+else
+    info "Offline mode — using pre-loaded images (docker load)"
+    # Verify at least one critical image exists locally
+    if ! docker image inspect ghcr.io/romain13190/wardian-mcp-servers:latest &>/dev/null; then
+        err "Images not found. Run 'docker load < wardian-edge-images.tar.gz' first."
+    fi
+    ok "Images present locally"
+fi
 
 # ---------- Start stack ------------------------------------------------------
 info "Starting Wardian Edge..."
 docker compose --profile onprem up -d
 echo ""
 
-# ---------- Wait for PostgreSQL ----------------------------------------------
-info "Waiting for PostgreSQL..."
-MAX_WAIT=120
-WAITED=0
-while [ $WAITED -lt $MAX_WAIT ]; do
-    STATUS=$(docker compose ps postgres --format json 2>/dev/null | grep -o '"Health":"[^"]*"' | head -1 || true)
-    if echo "$STATUS" | grep -q '"Health":"healthy"'; then
-        ok "PostgreSQL is healthy"
-        break
-    fi
-    sleep 2
-    WAITED=$((WAITED + 2))
-    printf "."
-done
-echo ""
+# ---------- Wait for health ---------------------------------------------------
+info "Waiting for services to be healthy..."
 
-if [ $WAITED -ge $MAX_WAIT ]; then
-    err "PostgreSQL did not become healthy within ${MAX_WAIT}s. Check: docker compose logs postgres"
-fi
+wait_healthy() {
+    local service=$1
+    local max_wait=${2:-120}
+    local waited=0
+    while [ $waited -lt $max_wait ]; do
+        local status
+        status=$(docker compose ps "$service" --format json 2>/dev/null | grep -o '"Health":"[^"]*"' | head -1 || true)
+        if echo "$status" | grep -q '"Health":"healthy"'; then
+            ok "$service is healthy"
+            return 0
+        fi
+        sleep 2
+        waited=$((waited + 2))
+        printf "."
+    done
+    echo ""
+    warn "$service did not become healthy within ${max_wait}s"
+    warn "Check logs: docker compose logs $service"
+    return 1
+}
 
-# ---------- Wait for services ------------------------------------------------
-info "Waiting for services to be ready..."
-sleep 10
+wait_healthy postgres 60
+wait_healthy minio 30
+wait_healthy mcp-servers 60
+wait_healthy knowledge 60
 
 # ---------- Status -----------------------------------------------------------
 echo ""
@@ -665,23 +477,21 @@ echo -e "${BOLD}=============================================${NC}"
 echo ""
 echo "  Cloud URL:     $CLOUD_URL"
 echo "  Org token:     ${ORG_TOKEN:0:16}..."
+echo "  LLM provider:  $LLM_BASE_URL"
 echo "  Gateway:       ON (WebSocket relay)"
 echo ""
-echo "  Services:"
-echo "    - PostgreSQL (pgvector)"
-echo "    - MinIO (object storage)"
-echo "    - MCP Servers (database, memory)"
-echo "    - Knowledge Engine (RAG)"
-echo "    - Gateway (WebSocket relay)"
-[[ -n "$ENABLED_MCPS" ]] && echo "    - Optional MCPs:${ENABLED_MCPS}"
+echo "  MCP Servers (always on):"
+echo "    - database   (mcp-servers:8001)"
+echo "    - memory     (mcp-servers:8002)"
+echo "    - knowledge  (knowledge:8443)"
+[[ -n "$ENABLED_MCPS" ]] && echo "    - optional:  ${ENABLED_MCPS}"
 echo ""
 echo "  Auto-update:   ON (Watchtower checks every 6h)"
 echo ""
 echo "  Commands:"
-echo "    cd $INSTALL_DIR"
+echo "    cd $(pwd)"
 echo "    docker compose --profile onprem logs -f        # follow logs"
 echo "    docker compose --profile onprem ps             # service status"
 echo "    docker compose --profile onprem down            # stop"
 echo "    docker compose --profile onprem down -v         # stop + DELETE data"
-echo "    docker compose --profile onprem up -d           # restart"
 echo ""
