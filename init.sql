@@ -94,20 +94,21 @@ CREATE INDEX IF NOT EXISTS idx_chunks_doc ON document_chunks(document_id);
 
 -- User memory (semantic facts)
 CREATE TABLE IF NOT EXISTS user_memory (
-    id TEXT PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id TEXT NOT NULL,
     org_id TEXT DEFAULT '',
-    category TEXT DEFAULT 'general',
-    content TEXT NOT NULL,
+    fact TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'general',
     embedding vector(4096),
-    importance REAL DEFAULT 0.5,
-    access_count INTEGER DEFAULT 0,
-    last_accessed BIGINT,
-    expires_at BIGINT,
-    created_at BIGINT NOT NULL,
-    updated_at BIGINT
+    source_conversation_id TEXT,
+    confidence FLOAT DEFAULT 1.0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_memory_user ON user_memory(user_id, org_id);
+CREATE INDEX IF NOT EXISTS idx_user_memory_category ON user_memory(user_id, category);
+CREATE INDEX IF NOT EXISTS idx_user_memory_expires ON user_memory(expires_at) WHERE expires_at IS NOT NULL;
 
 -- Integration credentials (encrypted OAuth tokens)
 CREATE TABLE IF NOT EXISTS integration_credentials (
