@@ -156,12 +156,15 @@ echo "    3. Calendar   — Agenda"
 echo "    4. Sheets     — Tableurs"
 echo "    5. Docs       — Documents"
 echo ""
+echo -e "  ${BOLD}Microsoft 365${NC} (Outlook, Calendar, OneDrive, Teams, Contacts, To Do) :"
+echo "    6. Microsoft 365"
+echo ""
 echo -e "  ${BOLD}Autres${NC} :"
-echo "    6. GitHub     — Repositories"
-echo "    7. Pharmacy   — Base WinPharma"
-echo "    8. Pipedrive  — CRM commercial"
-echo "    9. Erplain    — Gestion de stock"
-echo "   10. Pennylane  — Comptabilite"
+echo "    7. GitHub     — Repositories"
+echo "    8. Pharmacy   — Base WinPharma"
+echo "    9. Pipedrive  — CRM commercial"
+echo "   10. Erplain    — Gestion de stock"
+echo "   11. Pennylane  — Comptabilite"
 echo ""
 read -rp "$(echo -e "${CYAN}Which ones to enable? (comma-separated numbers, 'all', or Enter to skip):${NC} ")" MCP_SELECTION
 
@@ -170,6 +173,7 @@ ENABLE_DRIVE_MCP=false
 ENABLE_CALENDAR_MCP=false
 ENABLE_SHEETS_MCP=false
 ENABLE_DOCS_MCP=false
+ENABLE_MICROSOFT365=false
 ENABLE_GITHUB_MCP=false
 ENABLE_PHARMACY_MCP=false
 ENABLE_PIPEDRIVE_MCP=false
@@ -183,6 +187,7 @@ if [ -n "$MCP_SELECTION" ]; then
         ENABLE_CALENDAR_MCP=true
         ENABLE_SHEETS_MCP=true
         ENABLE_DOCS_MCP=true
+        ENABLE_MICROSOFT365=true
         ENABLE_GITHUB_MCP=true
         ENABLE_PHARMACY_MCP=true
         ENABLE_PIPEDRIVE_MCP=true
@@ -198,11 +203,12 @@ if [ -n "$MCP_SELECTION" ]; then
                 3)  ENABLE_CALENDAR_MCP=true ;;
                 4)  ENABLE_SHEETS_MCP=true ;;
                 5)  ENABLE_DOCS_MCP=true ;;
-                6)  ENABLE_GITHUB_MCP=true ;;
-                7)  ENABLE_PHARMACY_MCP=true ;;
-                8)  ENABLE_PIPEDRIVE_MCP=true ;;
-                9)  ENABLE_ERPLAIN_MCP=true ;;
-                10) ENABLE_PENNYLANE_MCP=true ;;
+                6)  ENABLE_MICROSOFT365=true ;;
+                7)  ENABLE_GITHUB_MCP=true ;;
+                8)  ENABLE_PHARMACY_MCP=true ;;
+                9)  ENABLE_PIPEDRIVE_MCP=true ;;
+                10) ENABLE_ERPLAIN_MCP=true ;;
+                11) ENABLE_PENNYLANE_MCP=true ;;
                 *)  warn "Unknown selection: $num (ignored)" ;;
             esac
         done
@@ -314,6 +320,42 @@ if [ "$NEEDS_GOOGLE" = "true" ]; then
     fi
 fi
 
+MICROSOFT_TENANT_ID=""
+MICROSOFT_CLIENT_ID=""
+MICROSOFT_CLIENT_SECRET=""
+
+if [ "$ENABLE_MICROSOFT365" = "true" ]; then
+    echo ""
+    echo -e "${BOLD}--- Microsoft 365 Configuration ---${NC}"
+    echo ""
+    echo "  Mode: client_credentials (app-only, recommande edge/enterprise)"
+    echo ""
+    echo "  Comment configurer :"
+    echo "    1. Azure Portal > Azure Active Directory > App registrations > New"
+    echo "    2. API permissions > Microsoft Graph > Application permissions :"
+    echo "       Mail.ReadWrite, Calendars.ReadWrite, Contacts.Read,"
+    echo "       Files.ReadWrite.All, Tasks.ReadWrite, Team.ReadBasic.All"
+    echo "    3. Grant admin consent (un admin du tenant doit approuver)"
+    echo "    4. Certificates & secrets > New client secret"
+    echo ""
+    read -rp "$(echo -e "${CYAN}MICROSOFT_TENANT_ID (ex: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx):${NC} ")" MICROSOFT_TENANT_ID
+    if [ -z "$MICROSOFT_TENANT_ID" ]; then
+        err "MICROSOFT_TENANT_ID is required."
+        exit 1
+    fi
+    read -rp "$(echo -e "${CYAN}MICROSOFT_CLIENT_ID:${NC} ")" MICROSOFT_CLIENT_ID
+    if [ -z "$MICROSOFT_CLIENT_ID" ]; then
+        err "MICROSOFT_CLIENT_ID is required."
+        exit 1
+    fi
+    read -rp "$(echo -e "${CYAN}MICROSOFT_CLIENT_SECRET:${NC} ")" MICROSOFT_CLIENT_SECRET
+    if [ -z "$MICROSOFT_CLIENT_SECRET" ]; then
+        err "MICROSOFT_CLIENT_SECRET is required."
+        exit 1
+    fi
+    ok "Microsoft 365 configured (tenant: $MICROSOFT_TENANT_ID)"
+fi
+
 if [ "$ENABLE_PIPEDRIVE_MCP" = "true" ]; then
     echo ""
     echo -e "${BOLD}--- Pipedrive Configuration ---${NC}"
@@ -364,6 +406,7 @@ ENABLED_LIST=""
 [ "$ENABLE_CALENDAR_MCP" = "true" ] && ENABLED_LIST="${ENABLED_LIST} calendar"
 [ "$ENABLE_SHEETS_MCP" = "true" ]   && ENABLED_LIST="${ENABLED_LIST} sheets"
 [ "$ENABLE_DOCS_MCP" = "true" ]     && ENABLED_LIST="${ENABLED_LIST} docs"
+[ "$ENABLE_MICROSOFT365" = "true" ] && ENABLED_LIST="${ENABLED_LIST} microsoft365"
 [ "$ENABLE_GITHUB_MCP" = "true" ]   && ENABLED_LIST="${ENABLED_LIST} github"
 [ "$ENABLE_PHARMACY_MCP" = "true" ] && ENABLED_LIST="${ENABLED_LIST} pharmacy"
 [ "$ENABLE_PIPEDRIVE_MCP" = "true" ] && ENABLED_LIST="${ENABLED_LIST} pipedrive"
@@ -455,9 +498,16 @@ ENABLE_PHARMACY_MCP=$ENABLE_PHARMACY_MCP
 ENABLE_CALENDAR_MCP=$ENABLE_CALENDAR_MCP
 ENABLE_SHEETS_MCP=$ENABLE_SHEETS_MCP
 ENABLE_DOCS_MCP=$ENABLE_DOCS_MCP
+ENABLE_MICROSOFT365=$ENABLE_MICROSOFT365
 ENABLE_PIPEDRIVE_MCP=$ENABLE_PIPEDRIVE_MCP
 ENABLE_ERPLAIN_MCP=$ENABLE_ERPLAIN_MCP
 ENABLE_PENNYLANE_MCP=$ENABLE_PENNYLANE_MCP
+
+# --- Microsoft 365 ---
+MICROSOFT_AUTH_MODE=client_credentials
+MICROSOFT_TENANT_ID=$MICROSOFT_TENANT_ID
+MICROSOFT_CLIENT_ID=$MICROSOFT_CLIENT_ID
+MICROSOFT_CLIENT_SECRET=$MICROSOFT_CLIENT_SECRET
 
 # --- Google Workspace (shared for all Google MCPs) ---
 GMAIL_AUTH_MODE=$GMAIL_AUTH_MODE
@@ -562,6 +612,11 @@ if [ "$EDGE_MODE" = "onprem" ]; then
         if [ "$ENABLE_PENNYLANE_MCP" = "true" ]; then
             echo "  pennylane:"
             echo "    url: \"http://mcp-servers:8013/sse\""
+        fi
+
+        if [ "$ENABLE_MICROSOFT365" = "true" ]; then
+            echo "  microsoft365:"
+            echo "    url: \"http://mcp-servers:8020/sse\""
         fi
 
         echo "  knowledge:"
@@ -697,6 +752,9 @@ if [ "$ENABLE_ERPLAIN_MCP" = "true" ]; then
 fi
 if [ "$ENABLE_PENNYLANE_MCP" = "true" ]; then
     echo "    - pennylane  (mcp-servers:8013)"
+fi
+if [ "$ENABLE_MICROSOFT365" = "true" ]; then
+    echo "    - microsoft365 (mcp-servers:8020)"
 fi
 
 if [ "$WATCHTOWER_ENABLED" = "true" ]; then
