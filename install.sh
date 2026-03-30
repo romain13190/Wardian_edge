@@ -26,6 +26,9 @@
 #   --pipedrive-domain   Pipedrive company domain
 #   --erplain-token      Erplain API token
 #   --pennylane-token    Pennylane API token
+#   --ms-tenant-id       Microsoft 365 Azure tenant ID
+#   --ms-client-id       Microsoft 365 Azure client ID
+#   --ms-client-secret   Microsoft 365 Azure client secret
 #   --dir         Install directory (default: ./wardian-edge)
 #   -y            Skip confirmation prompt
 #   --help        Show this help
@@ -78,6 +81,9 @@ PIPEDRIVE_API_TOKEN=""
 PIPEDRIVE_COMPANY_DOMAIN=""
 ERPLAIN_API_TOKEN=""
 PENNYLANE_API_TOKEN=""
+MS365_TENANT_ID=""
+MS365_CLIENT_ID=""
+MS365_CLIENT_SECRET=""
 AUTO_YES=false
 
 show_help() {
@@ -101,6 +107,9 @@ while [[ $# -gt 0 ]]; do
         --pipedrive-domain)  PIPEDRIVE_COMPANY_DOMAIN="$2"; shift 2 ;;
         --erplain-token)     ERPLAIN_API_TOKEN="$2"; shift 2 ;;
         --pennylane-token)   PENNYLANE_API_TOKEN="$2"; shift 2 ;;
+        --ms-tenant-id)      MS365_TENANT_ID="$2"; shift 2 ;;
+        --ms-client-id)      MS365_CLIENT_ID="$2"; shift 2 ;;
+        --ms-client-secret)  MS365_CLIENT_SECRET="$2"; shift 2 ;;
         --dir)       INSTALL_DIR="$2"; shift 2 ;;
         --offline)   OFFLINE=true; shift ;;
         -y)          AUTO_YES=true; shift ;;
@@ -127,6 +136,7 @@ ENABLE_PHARMACY_MCP=false
 ENABLE_PIPEDRIVE_MCP=false
 ENABLE_ERPLAIN_MCP=false
 ENABLE_PENNYLANE_MCP=false
+ENABLE_MICROSOFT365_MCP=false
 
 if [[ -n "$MCPS" ]]; then
     IFS=',' read -ra MCP_LIST <<< "$MCPS"
@@ -141,8 +151,9 @@ if [[ -n "$MCPS" ]]; then
             pharmacy)  ENABLE_PHARMACY_MCP=true ;;
             pipedrive) ENABLE_PIPEDRIVE_MCP=true ;;
             erplain)   ENABLE_ERPLAIN_MCP=true ;;
-            pennylane) ENABLE_PENNYLANE_MCP=true ;;
-            *)         warn "Unknown MCP: $mcp (ignored)" ;;
+            pennylane)     ENABLE_PENNYLANE_MCP=true ;;
+            microsoft365)  ENABLE_MICROSOFT365_MCP=true ;;
+            *)             warn "Unknown MCP: $mcp (ignored)" ;;
         esac
     done
 fi
@@ -172,6 +183,9 @@ fi
 [[ "$ENABLE_PIPEDRIVE_MCP" == "true" && -z "$PIPEDRIVE_COMPANY_DOMAIN" ]] && err "Pipedrive enabled but --pipedrive-domain missing"
 [[ "$ENABLE_ERPLAIN_MCP" == "true" && -z "$ERPLAIN_API_TOKEN" ]] && err "Erplain enabled but --erplain-token missing"
 [[ "$ENABLE_PENNYLANE_MCP" == "true" && -z "$PENNYLANE_API_TOKEN" ]] && err "Pennylane enabled but --pennylane-token missing"
+[[ "$ENABLE_MICROSOFT365_MCP" == "true" && -z "$MS365_TENANT_ID" ]] && err "Microsoft 365 enabled but --ms-tenant-id missing"
+[[ "$ENABLE_MICROSOFT365_MCP" == "true" && -z "$MS365_CLIENT_ID" ]] && err "Microsoft 365 enabled but --ms-client-id missing"
+[[ "$ENABLE_MICROSOFT365_MCP" == "true" && -z "$MS365_CLIENT_SECRET" ]] && err "Microsoft 365 enabled but --ms-client-secret missing"
 
 # ---------- Pre-flight checks -----------------------------------------------
 echo ""
@@ -220,7 +234,8 @@ ENABLED_MCPS=""
 [[ "$ENABLE_PHARMACY_MCP" == "true" ]]  && ENABLED_MCPS="${ENABLED_MCPS} pharmacy"
 [[ "$ENABLE_PIPEDRIVE_MCP" == "true" ]] && ENABLED_MCPS="${ENABLED_MCPS} pipedrive"
 [[ "$ENABLE_ERPLAIN_MCP" == "true" ]]   && ENABLED_MCPS="${ENABLED_MCPS} erplain"
-[[ "$ENABLE_PENNYLANE_MCP" == "true" ]] && ENABLED_MCPS="${ENABLED_MCPS} pennylane"
+[[ "$ENABLE_PENNYLANE_MCP" == "true" ]]     && ENABLED_MCPS="${ENABLED_MCPS} pennylane"
+[[ "$ENABLE_MICROSOFT365_MCP" == "true" ]] && ENABLED_MCPS="${ENABLED_MCPS} microsoft365"
 
 if [[ -n "$ENABLED_MCPS" ]]; then
     echo "    - Optional MCPs:${ENABLED_MCPS}"
@@ -315,6 +330,14 @@ ENABLE_PHARMACY_MCP=$ENABLE_PHARMACY_MCP
 ENABLE_PIPEDRIVE_MCP=$ENABLE_PIPEDRIVE_MCP
 ENABLE_ERPLAIN_MCP=$ENABLE_ERPLAIN_MCP
 ENABLE_PENNYLANE_MCP=$ENABLE_PENNYLANE_MCP
+ENABLE_MICROSOFT365_MCP=$ENABLE_MICROSOFT365_MCP
+ENABLE_MICROSOFT365=$ENABLE_MICROSOFT365_MCP
+
+# Microsoft 365
+MICROSOFT_TENANT_ID=$MS365_TENANT_ID
+MICROSOFT_CLIENT_ID=$MS365_CLIENT_ID
+MICROSOFT_CLIENT_SECRET=$MS365_CLIENT_SECRET
+MICROSOFT_AUTH_MODE=client_credentials
 
 # Google Workspace
 GMAIL_AUTH_MODE=$GMAIL_AUTH_MODE
@@ -397,6 +420,10 @@ info "Writing config/edge.yaml..."
     [[ "$ENABLE_CALENDAR_MCP" == "true" ]] && {
         echo "  calendar:"
         echo "    url: \"http://mcp-servers:8016/sse\""
+    }
+    [[ "$ENABLE_MICROSOFT365_MCP" == "true" ]] && {
+        echo "  microsoft365:"
+        echo "    url: \"http://mcp-servers:8020/sse\""
     }
 
     echo "  knowledge:"

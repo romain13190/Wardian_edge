@@ -16,7 +16,7 @@ services:
     mem_limit: 256m
     environment:
       WATCHTOWER_LABEL_ENABLE: "true"          # only update containers with enable label
-      WATCHTOWER_POLL_INTERVAL: ${WATCHTOWER_POLL_INTERVAL:-21600}  # default 6h
+      WATCHTOWER_POLL_INTERVAL: ${WATCHTOWER_POLL_INTERVAL:-600}  # default 10min
       WATCHTOWER_CLEANUP: "true"               # remove old images after update
       WATCHTOWER_ROLLING_RESTART: "true"       # restart one at a time
       WATCHTOWER_INCLUDE_RESTARTING: "true"
