@@ -59,6 +59,22 @@ CREATE TRIGGER trg_auto_create_conversation
     FOR EACH ROW
     EXECUTE FUNCTION auto_create_conversation();
 
+-- Projects
+CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    org_id TEXT,
+    created_by TEXT,
+    name TEXT NOT NULL,
+    visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'org')),
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_projects_org_id ON projects(org_id);
+CREATE INDEX IF NOT EXISTS idx_projects_created_by ON projects(created_by);
+
+-- Add project_id to conversations (links conversation to a project)
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS project_id TEXT REFERENCES projects(id) ON DELETE SET NULL;
+
 -- Documents
 CREATE TABLE IF NOT EXISTS documents (
     id TEXT PRIMARY KEY,
@@ -91,6 +107,32 @@ CREATE TABLE IF NOT EXISTS document_chunks (
 CREATE INDEX IF NOT EXISTS idx_chunks_org ON document_chunks(org_id, visibility);
 CREATE INDEX IF NOT EXISTS idx_chunks_user ON document_chunks(org_id, user_id, visibility);
 CREATE INDEX IF NOT EXISTS idx_chunks_doc ON document_chunks(document_id);
+
+-- Project documents (link documents to projects)
+-- No FK on document_id: docs may live in knowledge_documents (Knowledge MCP)
+-- or documents (Vault), depending on how they were indexed.
+CREATE TABLE IF NOT EXISTS project_documents (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    document_id TEXT NOT NULL,
+    linked_by TEXT,
+    linked_at BIGINT NOT NULL,
+    PRIMARY KEY (project_id, document_id)
+);
+
+-- Project memory (per-project semantic facts)
+CREATE TABLE IF NOT EXISTS project_memory (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    fact TEXT NOT NULL,
+    category TEXT DEFAULT 'general',
+    embedding vector(4096),
+    source_conversation_id TEXT,
+    created_by TEXT,
+    confidence FLOAT DEFAULT 1.0,
+    created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now()) * 1000)::BIGINT,
+    updated_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now()) * 1000)::BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_project_memory_project_id ON project_memory(project_id);
 
 -- User memory (semantic facts)
 CREATE TABLE IF NOT EXISTS user_memory (
@@ -168,6 +210,9 @@ CREATE TABLE IF NOT EXISTS skills (
     description TEXT NOT NULL,
     content TEXT NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT true,
+    tags TEXT[] NOT NULL DEFAULT '{}',
+    keywords TEXT[] NOT NULL DEFAULT '{}',
+    auto_inject BOOLEAN NOT NULL DEFAULT false,
     created_at BIGINT NOT NULL,
     updated_at BIGINT
 );
@@ -175,6 +220,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_unique_name
     ON skills(COALESCE(org_id, '__global__'), name);
 CREATE INDEX IF NOT EXISTS idx_skills_org_id ON skills(org_id);
 CREATE INDEX IF NOT EXISTS idx_skills_global ON skills(org_id) WHERE org_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_skills_tags ON skills USING GIN (tags);
 
 -- ============================================================
 -- Agents (matches cloud migration 008_agents)
