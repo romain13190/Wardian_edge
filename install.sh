@@ -287,7 +287,12 @@ POSTGRES_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)
 MINIO_ROOT_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)
 # Fernet key = url-safe base64 of 32 random bytes (44 chars with trailing =)
 INTEGRATION_ENCRYPTION_KEY=$(openssl rand 32 | openssl base64 -A | tr '+/' '-_')
-ok "Credentials generated (POSTGRES_PASSWORD, MINIO_ROOT_PASSWORD, INTEGRATION_ENCRYPTION_KEY)"
+# Bearer key shared by mcp-servers, knowledge, gateway to authenticate
+# HTTP calls between components on the local Docker network. Starts in
+# warn mode (logs but doesn't block) so a fresh install can't break on
+# a config typo; flip MCP_AUTH_MODE=enforce in .env once logs are clean.
+MCP_API_KEY=$(openssl rand -hex 32)
+ok "Credentials generated (POSTGRES_PASSWORD, MINIO_ROOT_PASSWORD, INTEGRATION_ENCRYPTION_KEY, MCP_API_KEY)"
 
 # ---------- Copy Google service account if provided ---------------------------
 if [[ -n "$GOOGLE_SERVICE_ACCOUNT_KEY_PATH" ]]; then
@@ -358,6 +363,11 @@ PENNYLANE_API_TOKEN=$PENNYLANE_API_TOKEN
 
 # Encryption
 INTEGRATION_ENCRYPTION_KEY=$INTEGRATION_ENCRYPTION_KEY
+
+# MCP bearer auth — shared by mcp-servers (validates), knowledge + gateway (send the header).
+# Mode: warn = log only, enforce = 401/403, off = disabled.
+MCP_API_KEY=$MCP_API_KEY
+MCP_AUTH_MODE=warn
 
 # Auto-update (Watchtower)
 GHCR_TOKEN=$GHCR_TOKEN
