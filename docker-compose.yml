@@ -128,8 +128,13 @@ services:
       WARDIAN_CLOUD_URL: ${WARDIAN_CLOUD_URL:-}
       MCP_REGISTRY_TOKEN: ${MCP_REGISTRY_TOKEN:-}
       MCP_ORG_ID: ${MCP_ORG_ID:-}
+      # Bearer auth on MCP HTTP endpoints. Empty = no auth (legacy behavior).
+      # Mode: off = no middleware, warn = log only, enforce = 401/403.
+      MCP_API_KEY: ${MCP_API_KEY:-}
+      MCP_AUTH_MODE: ${MCP_AUTH_MODE:-warn}
     volumes:
       - ./config/google-service-account.json:/app/config/google-service-account.json:ro
+      - edge_shared_files:/app/shared_files
     depends_on:
       postgres:
         condition: service_healthy
@@ -159,6 +164,9 @@ services:
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
       MINIO_BUCKET: wardian-vault
       ALLOWED_MCP_URL_PREFIXES: "http://localhost:,http://mcp-servers:"
+      # Bearer header sent by Knowledge sync when calling local MCPs. Must
+      # match MCP_API_KEY on the mcp-servers container (same .env value).
+      MCP_API_KEY: ${MCP_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -181,8 +189,13 @@ services:
       - "com.centurylinklabs.watchtower.enable=true"
     profiles:
       - onprem
+    environment:
+      # Bearer header sent by Gateway when relaying tool calls to local MCPs.
+      # Must match MCP_API_KEY on the mcp-servers container (same .env value).
+      MCP_API_KEY: ${MCP_API_KEY:-}
     volumes:
       - ./config/edge.yaml:/app/wardian-gateway.yaml:ro
+      - edge_shared_files:/shared_files
     depends_on:
       mcp-servers:
         condition: service_healthy
@@ -193,3 +206,4 @@ services:
 volumes:
   edge_pgdata:
   edge_s3data:
+  edge_shared_files:

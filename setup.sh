@@ -452,10 +452,16 @@ POSTGRES_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)
 MINIO_ROOT_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)
 # Fernet key = url-safe base64 of 32 random bytes (no Python needed)
 INTEGRATION_ENCRYPTION_KEY=$(openssl rand 32 | openssl base64 -A | tr '+/' '-_')
+# Bearer key shared by mcp-servers, knowledge, gateway to authenticate
+# HTTP calls between components on the local Docker network. Starts in
+# warn mode (logs but doesn't block) so a fresh install can't be broken
+# by a config typo; flip MCP_AUTH_MODE=enforce in .env once logs are clean.
+MCP_API_KEY=$(openssl rand -hex 32)
 
 ok "POSTGRES_PASSWORD generated"
 ok "MINIO_ROOT_PASSWORD generated"
 ok "INTEGRATION_ENCRYPTION_KEY generated"
+ok "MCP_API_KEY generated (auth starts in warn mode — flip to enforce after first 24h)"
 
 # =============================================================================
 # 7. Write .env
@@ -530,9 +536,15 @@ PENNYLANE_API_TOKEN=$PENNYLANE_API_TOKEN
 # --- Integration encryption ---
 INTEGRATION_ENCRYPTION_KEY=$INTEGRATION_ENCRYPTION_KEY
 
+# --- MCP bearer auth ---
+# Shared by mcp-servers (validates), knowledge + gateway (send the header).
+# Mode: warn = log only, enforce = 401/403, off = disabled.
+MCP_API_KEY=$MCP_API_KEY
+MCP_AUTH_MODE=warn
+
 # --- Auto-update (Watchtower) ---
 GHCR_TOKEN=${GHCR_TOKEN:-}
-WATCHTOWER_POLL_INTERVAL=21600
+WATCHTOWER_POLL_INTERVAL=600
 ENVEOF
 
 ok ".env written"
