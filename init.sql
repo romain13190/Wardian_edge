@@ -187,6 +187,23 @@ CREATE TABLE IF NOT EXISTS vault_files (
 );
 CREATE INDEX IF NOT EXISTS idx_vault_files_user ON vault_files(user_id);
 
+-- Vault folders (nested tree) + per-folder sharing membership
+CREATE TABLE IF NOT EXISTS vault_folders (
+    id          TEXT PRIMARY KEY,
+    owner_id    TEXT NOT NULL,
+    org_id      TEXT,
+    parent_id   TEXT REFERENCES vault_folders(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    visibility  TEXT NOT NULL DEFAULT 'private'
+                CHECK (visibility IN ('private','org','shared')),
+    created_at  BIGINT NOT NULL,
+    updated_at  BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_vault_folders_parent ON vault_folders(parent_id);
+CREATE INDEX IF NOT EXISTS idx_vault_folders_owner ON vault_folders(owner_id);
+ALTER TABLE vault_files ADD COLUMN IF NOT EXISTS folder_id TEXT
+    REFERENCES vault_folders(id) ON DELETE SET NULL;
+
 -- Audit logs
 CREATE TABLE IF NOT EXISTS audit_logs (
     id TEXT PRIMARY KEY,
