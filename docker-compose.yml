@@ -104,6 +104,7 @@ services:
       ENABLE_PIPEDRIVE_MCP: ${ENABLE_PIPEDRIVE_MCP:-false}
       ENABLE_ERPLAIN_MCP: ${ENABLE_ERPLAIN_MCP:-false}
       ENABLE_PENNYLANE_MCP: ${ENABLE_PENNYLANE_MCP:-false}
+      ENABLE_MEGAO_MCP: ${ENABLE_MEGAO_MCP:-false}
       ENABLE_MICROSOFT365: ${ENABLE_MICROSOFT365:-false}
       # Microsoft 365 (Outlook, Calendar, OneDrive, Teams, Contacts, To Do)
       MICROSOFT_AUTH_MODE: ${MICROSOFT_AUTH_MODE:-client_credentials}
@@ -124,6 +125,10 @@ services:
       ERPLAIN_API_TOKEN: ${ERPLAIN_API_TOKEN:-}
       # Pennylane
       PENNYLANE_API_TOKEN: ${PENNYLANE_API_TOKEN:-}
+      # Megao ERP (Pervasive) — read-only MCP via the relay on the ERP server
+      MEGAO_RELAY_URL: ${MEGAO_RELAY_URL:-}
+      MEGAO_RELAY_TOKEN: ${MEGAO_RELAY_TOKEN:-}
+      MEGAO_MCP_PORT: ${MEGAO_MCP_PORT:-8032}
       # Cloud mode: MCPs self-register via HTTP (set by setup.sh)
       WARDIAN_CLOUD_URL: ${WARDIAN_CLOUD_URL:-}
       MCP_REGISTRY_TOKEN: ${MCP_REGISTRY_TOKEN:-}
